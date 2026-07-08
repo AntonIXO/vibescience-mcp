@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vibescience-mcp"
+version = "0.1.0"
+description = "A scientific experiment log (MCP server) storing reasoning + causal claims as an Obsidian-compatible markdown vault."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Anton Ivanov", email = "fourth@devpins.org" }]
+license = { text = "MIT" }
+dependencies = [
+    "fastmcp>=2.0.0",
+    "python-frontmatter>=1.1.0",
+    "pydantic>=2.6",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+embeddings = ["fastembed>=0.3", "sqlite-vec>=0.1.1"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
+
+[project.scripts]
+vibescience-mcp = "vibescience_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

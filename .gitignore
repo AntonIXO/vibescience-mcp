@@ -1,0 +1,14 @@
+# venv / build
+.venv/
+*.egg-info/
+build/
+dist/
+__pycache__/
+*.pyc
+
+# disposable index + generated vault (source of truth lives elsewhere)
+*.sqlite
+.index.sqlite
+
+# local research vault
+/vibescience-vault/
