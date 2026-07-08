@@ -12,3 +12,6 @@ __pycache__/
 
 # local research vault
 /vibescience-vault/
+
+# pytest
+.pytest_cache/
