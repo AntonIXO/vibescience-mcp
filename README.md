@@ -86,6 +86,17 @@ Each entity is one markdown file: YAML frontmatter for structured fields, body f
 | `VIBESCIENCE_VAULT` | `~/vibescience-vault` | vault path (source of truth) |
 | `VIBESCIENCE_EMBEDDINGS` | `off` | `on` enables local FastEmbed semantic recall (Phase 2 scaffold) |
 
+## Bundled workflow skill
+
+`skills/vibescience-mcp-workflow/SKILL.md` ships the battle-tested procedure for
+running the full loop: pair **deep research** (`perplexity_research`) + the
+**arxiv** MCP with a real, verdict-computed experiment cycle, then dogfood it
+into the vault. It encodes the hard-won pitfalls (research timeouts, making an
+experiment able to *refute*, semi-synthetic precision protocols on unlabeled
+prod data, the opt-in-vs-blanket deployment guardrail). Load it into any
+Hermes/Claude session with `skill_view(name='vibescience-mcp-workflow')`, or read
+it directly — it is plain markdown.
+
 ## Tests
 
 ```bash
