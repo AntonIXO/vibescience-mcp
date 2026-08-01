@@ -648,9 +648,18 @@ class Store:
                     "FROM evaluation WHERE hypothesis_id=? AND is_primary=1 LIMIT 1",
                     (hid,),
                 ).fetchone()
-                if ev:
+                if ev and ev["observed"] is not None and ev["delta"] is not None:
                     why = (f"{status}: predicted {ev['diagnostic_id']} {ev['predicted']}, "
                            f"observed {ev['observed']} (Δ {ev['delta']:+g})")
+                elif ev:
+                    # The primary diagnostic was PREDICTED but never measured, so
+                    # observed/delta are NULL. Formatting NULL used to raise
+                    # TypeError and take the whole pre-mortem gate down — and it
+                    # only ever triggered on inconclusive/refuted rows, i.e. the
+                    # negative results this tool exists to surface.
+                    why = (f"{status}: predicted {ev['diagnostic_id']} "
+                           f"{ev['predicted']}, but that diagnostic was never "
+                           f"measured — re-run and record it")
                 else:
                     why = f"{status}: no confirming measurement"
 

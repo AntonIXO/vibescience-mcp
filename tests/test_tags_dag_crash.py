@@ -207,3 +207,41 @@ def test_abort_requires_a_reason_and_rejects_double_close(vault):
     s.abort_experiment("e1", crash_reason="boom")
     with pytest.raises(VibeScienceError, match="already closed"):
         s.abort_experiment("e1", crash_reason="again")
+
+
+# --------------------------------------------------------------------------- #
+# Regression: prod crash found in Codex rollouts (2026-07-28)
+# --------------------------------------------------------------------------- #
+def test_recall_survives_unmeasured_primary_diagnostic(vault):
+    """`recall` crashed 5x in a real Codex run with
+    `unsupported format string passed to NoneType.__format__`.
+
+    Cause: a hypothesis predicts a PRIMARY diagnostic that the experiment never
+    measured, so evaluation.observed/delta are NULL and f"{None:+g}" raised.
+    Worst possible blast radius: it only fired on refuted/inconclusive rows —
+    exactly the negative results the pre-mortem gate exists to surface — so the
+    tool died precisely when it mattered.
+    """
+    s = Store(vault)
+    s.register_tag("t", axis="topic")
+    s.register_diagnostic("primary", direction="higher_better", id="prim")
+    s.register_diagnostic("other", direction="higher_better", id="other")
+    s.register_intervention("iv", id="iv", topic_tags=["t"])
+    s.create_problem("p", id="p", topic_tags=["t"])
+    s.propose_hypothesis(
+        "p", "prim goes up", id="h", topic_tags=["t"], interventions=["iv"],
+        predicted_effects=[{"diagnostic_id": "prim", "direction": "up"},
+                           {"diagnostic_id": "other", "direction": "up"}])
+    s.start_experiment("h", id="e")
+    # only the SECONDARY diagnostic gets measured
+    s.record_diagnostics("e", [{"diagnostic_id": "other", "before": 1.0, "after": 2.0}])
+    assert s.close_experiment("e")["verdict"] == "inconclusive"
+
+    r = s.recall(topic_tags=["t"])          # used to raise TypeError
+    why = r["results"][0]["why_it_failed"]
+    assert "never" in why and "measured" in why, why
+
+    # the sibling surfaces must not trip on the same NULL either
+    s.causal_map(tag="t")
+    s.calibration(tag="t")
+    s.write_canvas(tag="t")
