@@ -27,18 +27,58 @@ whole point (a queryable causal map + a calibration signal on your own intuition
    ({diagnostic_id, direction: up|down|none, magnitude_note}) on a registered
    diagnostic. The first predicted_effect is the *primary* one the verdict keys
    off. No prediction → rejected. This commitment is what makes calibration real.
+   **Preregister your gates in the same call.** If the claim has a magnitude bar,
+   a resource ceiling or a deployment condition, declare it as
+   `gates=[{id, description, blocking}]` BEFORE the run. Direction alone is a
+   weak claim.
 5. **Run it.** `start_experiment(hypothesis_id)` — git_ref auto-captured from
    HEAD if you omit it. Set `parent_experiment_id` whenever this run builds on a
    previous one. `record_diagnostics` with before/after per diagnostic.
+   Then `record_gate_results` — YOU compute the gate (paired bootstrap, sign-flip
+   test, VRAM check) and report the outcome plus the deciding numbers.
 6. **Let the verdict be computed.** `close_experiment` computes
    `observed_effects`, `prediction_match` (per-diagnostic + overall), and the
-   `verdict` (supports/refutes/inconclusive). You do NOT get to assert
-   "confirmed" on vibes — it is derived from the primary prediction vs the
-   observation. A positive match returns a *suggestion* to commit your git_ref;
-   it never commits for you.
+   `verdict`. You do NOT get to assert "confirmed" on vibes — it is derived from
+   the primary prediction vs the observation, then downgraded if a preregistered
+   blocking gate failed. A positive match returns a *suggestion* to commit your
+   git_ref; it never commits for you.
    **If the run CRASHED, call `abort_experiment(id, crash_reason)` instead.** A
    crash is not a result: it records no measurement, never enters calibration,
    and leaves the hypothesis retryable. Never invent a null result for it.
+
+## Direction is not the same as the claim
+
+A verdict of **`directional_only`** means the metric moved the way you predicted
+but a preregistered blocking gate did NOT pass. It is not a win. Do not deploy
+on it and do not unlock a locked test on it.
+
+This exists because a real confirmation run was recorded as `supports` while its
+own superiority gate failed — mean ΔRecall@5 = +0.003 with an exact sign-flip
+p = 0.34375 and a paired bootstrap CI95 of [-0.0085, +0.0135] crossing zero, on
+per-seed deltas whose signs were −, +, +, −, + (noise). The agent knew and said
+so in prose, but `calibration`, `causal_map` and `recall` read only the verdict
+field, so the machine-readable record asserted a win the gate had rejected.
+
+Four levels, never equated:
+
+1. **directional support** — the sign matched;
+2. **preregistered magnitude gate** — the effect was big enough to matter;
+3. **deployment / collapse gate** — it is safe to ship;
+4. **locked-test eligibility** — it has earned the held-out set.
+
+Rules:
+
+- An unreported blocking gate counts as NOT passed. Silence is not a pass, and
+  `close_experiment` will refuse to close until you state the outcome.
+- A gate that was never preregistered is REJECTED at `record_gate_results`.
+  Inventing a criterion after seeing the data is post-hoc; supersede the
+  hypothesis with a properly gated one instead.
+- `calibration()` returns `accuracy` (direction) and `gate_accuracy`
+  (magnitude) separately. A low `gate_accuracy` is your **overclaim rate** —
+  the rate at which you were directionally right and still wrong about whether
+  it mattered.
+- vibescience computes no statistics. Your campaign scripts already do that
+  correctly; this records what you committed to and what the gate returned.
 
 ## Tags are a registered vocabulary, not free text
 
