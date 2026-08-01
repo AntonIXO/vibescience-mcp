@@ -215,6 +215,7 @@ class Hypothesis(BaseModel):
     rationale: str = ""
     interventions: list[str] = Field(default_factory=list)
     predicted_effects: list[PredictedEffect] = Field(default_factory=list)
+    gates: list[Gate] = Field(default_factory=list)
     plan: str = ""
     status: HypothesisStatus = HypothesisStatus.proposed
     topic_tags: list[str] = Field(default_factory=list)
@@ -247,6 +248,7 @@ class Experiment(BaseModel):
     config_note: str = ""
     diagnostics_measured: list[Measurement] = Field(default_factory=list)
     observed_effects: list[ObservedEffect] = Field(default_factory=list)
+    gate_results: list[GateResult] = Field(default_factory=list)
     verdict: Optional[Verdict] = None
     prediction_match: Optional[PredictionMatch] = None
     crash_reason: str = ""

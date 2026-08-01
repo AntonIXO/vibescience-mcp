@@ -112,6 +112,10 @@ class Vault:
             links.append("Applies " + ", ".join(wl(i) for i in h.interventions) + ".")
         for pe in h.predicted_effects:
             links.append(f"Predicts {wl(pe.diagnostic_id)} ({pe.direction.value}).")
+        for g in h.gates:
+            mark = "blocking" if g.blocking else "advisory"
+            desc = f": {g.description}" if g.description else ""
+            links.append(f"Gate `{g.id}` ({mark}){desc}")
         if h.paper_refs:
             links.append("Cites " + ", ".join(wl(r) for r in h.paper_refs) + ".")
         if h.supersedes:
@@ -159,8 +163,19 @@ class Vault:
                         line += f" {ok} predicted {pd}"
                     line += ")"
                 body += line + "\n"
+        if e.gate_results:
+            body += "\n## Gates\n"
+            for gr in e.gate_results:
+                icon = "PASS" if gr.passed else "**FAIL**"
+                line = f"- `{gr.gate_id}`: {icon}"
+                if gr.evidence:
+                    line += f" — {gr.evidence}"
+                body += line + "\n"
         if e.verdict:
             body += f"\n**Verdict:** {e.verdict.value}\n"
+            if e.verdict.value == "directional_only":
+                body += ("\n> Direction matched, but a preregistered blocking gate "
+                         "did NOT pass. This does not establish the claim.\n")
         if e.crash_reason:
             body += f"\n**Crash:** {e.crash_reason}\n"
         if e.notes:
