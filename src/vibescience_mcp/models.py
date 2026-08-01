@@ -55,6 +55,9 @@ class Verdict(str, Enum):
     refutes = "refutes"
     inconclusive = "inconclusive"
     crashed = "crashed"
+    # Direction matched, but a PREREGISTERED blocking gate did not pass. The
+    # claim is not established. See models.Gate for why this exists.
+    directional_only = "directional_only"
 
 
 class TagAxis(str, Enum):
@@ -117,6 +120,37 @@ class PredictionMatch(BaseModel):
 
     per_diagnostic: dict[str, bool] = Field(default_factory=dict)
     overall: bool = False
+
+
+class Gate(BaseModel):
+    """A PREREGISTERED pass/fail criterion, committed BEFORE the run.
+
+    vibescience does not compute gates — the campaign scripts already do that
+    correctly (paired bootstrap CIs, exact sign-flip tests, VRAM ceilings).
+    This records *what was committed to*, so "the direction was right" can never
+    be reported as "the claim was established".
+
+    Without this, a real EiV confirmation run was logged as ``supports`` while
+    its own superiority gate failed at p=0.34375 with a bootstrap CI crossing
+    zero. A failing blocking gate downgrades ``supports`` -> ``directional_only``.
+    """
+
+    id: str
+    description: str = ""
+    blocking: bool = True
+
+
+class GateResult(BaseModel):
+    """The outcome of a preregistered gate, recorded after the run.
+
+    ``evidence`` should carry the numbers that decided it (p-value, CI bounds,
+    observed vs required magnitude) so the record is auditable without
+    re-opening the campaign artifacts.
+    """
+
+    gate_id: str
+    passed: bool
+    evidence: str = ""
 
 
 # --------------------------------------------------------------------------- #
@@ -266,13 +300,20 @@ def compute_prediction_match(
 def compute_verdict(
     predicted: list[PredictedEffect],
     observed: list[ObservedEffect],
+    gates: Optional[list[Gate]] = None,
+    gate_results: Optional[list[GateResult]] = None,
 ) -> Verdict:
-    """Compute the experiment verdict from the *primary* predicted effect.
+    """Compute the experiment verdict from the *primary* predicted effect, then
+    downgrade it if a preregistered blocking gate did not pass.
 
-    - ``supports``      primary observed direction == primary predicted direction
-    - ``refutes``       primary observed direction is the strict opposite
-    - ``inconclusive``  primary diagnostic did not move, was not measured,
-                        or the prediction was a null (``none``) that failed
+    - ``supports``          primary direction matched AND every blocking gate passed
+    - ``directional_only``  primary direction matched but a blocking gate did NOT
+    - ``refutes``           primary observed direction is the strict opposite
+    - ``inconclusive``      primary diagnostic did not move, or was not measured
+
+    Gates can only ever *downgrade* a win — they never rescue a refutation and
+    never manufacture one. Declaring no gates reproduces the original two-level
+    behaviour exactly, which is what keeps the existing vaults valid.
     """
     if not predicted:
         return Verdict.inconclusive
@@ -281,14 +322,19 @@ def compute_verdict(
     o = obs_by_id.get(primary.diagnostic_id)
     if o is None or o.direction == Direction.none:
         return Verdict.inconclusive
-    if o.direction == primary.direction:
-        return Verdict.supports
-    # observed moved, and in a named direction different from prediction
-    opposite = {Direction.up: Direction.down, Direction.down: Direction.up}
-    if primary.direction in opposite and o.direction == opposite[primary.direction]:
+    if o.direction != primary.direction:
+        # observed moved in a named direction different from the prediction —
+        # including a predicted 'none' that in fact moved
         return Verdict.refutes
-    # predicted 'none' but it moved → the null prediction failed → refutes
-    return Verdict.refutes
+
+    blocking = [g.id for g in (gates or []) if g.blocking]
+    if not blocking:
+        return Verdict.supports
+    passed = {r.gate_id: r.passed for r in (gate_results or [])}
+    # An unreported gate counts as not passed: silence is not a pass.
+    if all(passed.get(gid, False) for gid in blocking):
+        return Verdict.supports
+    return Verdict.directional_only
 
 
 def verdict_to_hypothesis_status(v: Verdict) -> HypothesisStatus:
@@ -303,4 +349,8 @@ def verdict_to_hypothesis_status(v: Verdict) -> HypothesisStatus:
         Verdict.refutes: HypothesisStatus.refuted,
         Verdict.inconclusive: HypothesisStatus.inconclusive,
         Verdict.crashed: HypothesisStatus.testing,
+        # Direction was right but the preregistered bar was not cleared, so the
+        # claim is NOT established: the hypothesis stays unproven and recall
+        # ranks it with the negatives rather than presenting it as a win.
+        Verdict.directional_only: HypothesisStatus.inconclusive,
     }[v]
