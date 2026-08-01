@@ -214,3 +214,67 @@ def test_duplicate_gate_ids_are_rejected_at_proposal(vault):
         s.propose_hypothesis("p", "x", id="h",
                              predicted_effects=[{"diagnostic_id": "m", "direction": "up"}],
                              gates=[{"id": "g"}, {"id": "g"}])
+
+
+# --------------------------------------------------------------------------- #
+# Gate calibration: the overclaim rate
+# --------------------------------------------------------------------------- #
+def test_gate_calibration_separates_direction_from_magnitude(vault):
+    """Direction accuracy and gate accuracy are ORTHOGONAL signals.
+
+    The EiV campaign had good direction intuition and a bad sense of effect
+    size. One number cannot express that; two can.
+    """
+    s = _gated(vault)
+    s.start_experiment("h", id="e")
+    s.record_diagnostics("e", [{"diagnostic_id": "recall5",
+                                "before": 0.118, "after": 0.121}])
+    s.record_gate_results("e", [{"gate_id": "mean_recall_delta", "passed": False}])
+    s.close_experiment("e")
+
+    cal = s.calibration()
+    assert cal["accuracy"] == 1.0, "direction WAS predicted correctly"
+    assert cal["gate_accuracy"] == 0.0, "but the preregistered bar was not cleared"
+    assert cal["gate_n"] == 1
+    assert "overclaim" in (cal["note"] or "").lower()
+
+
+def test_gate_calibration_is_none_when_no_gates_were_ever_used(vault):
+    """Vaults with no gates must not grow a misleading 0.0."""
+    s = Store(vault)
+    s.register_diagnostic("m", direction="higher_better", id="m")
+    s.create_problem("p", id="p")
+    s.propose_hypothesis("p", "x", id="h",
+                         predicted_effects=[{"diagnostic_id": "m", "direction": "up"}])
+    s.start_experiment("h", id="e")
+    s.record_diagnostics("e", [{"diagnostic_id": "m", "before": 1.0, "after": 2.0}])
+    s.close_experiment("e")
+    cal = s.calibration()
+    assert cal["gate_n"] == 0
+    assert cal["gate_accuracy"] is None
+
+
+def test_per_gate_breakdown_shows_which_bar_keeps_failing(vault):
+    s = Store(vault)
+    s.register_diagnostic("m", direction="higher_better", id="m")
+    s.create_problem("p", id="p")
+    s.propose_hypothesis("p", "x", id="h",
+                         predicted_effects=[{"diagnostic_id": "m", "direction": "up"}],
+                         gates=[{"id": "magnitude"}, {"id": "vram"}])
+    s.start_experiment("h", id="e")
+    s.record_diagnostics("e", [{"diagnostic_id": "m", "before": 1.0, "after": 2.0}])
+    s.record_gate_results("e", [{"gate_id": "magnitude", "passed": False},
+                                {"gate_id": "vram", "passed": True}])
+    s.close_experiment("e")
+    per = s.calibration()["per_gate"]
+    assert per["magnitude"]["accuracy"] == 0.0
+    assert per["vram"]["accuracy"] == 1.0
+
+
+def test_crashed_run_gate_results_never_reach_calibration(vault):
+    """A crashed run measured nothing; its gates cannot count as evidence."""
+    s = _gated(vault)
+    s.start_experiment("h", id="e")
+    s.record_gate_results("e", [{"gate_id": "mean_recall_delta", "passed": False}])
+    s.abort_experiment("e", crash_reason="CUDA OOM")
+    assert s.calibration()["gate_n"] == 0

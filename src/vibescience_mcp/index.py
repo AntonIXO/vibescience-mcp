@@ -46,6 +46,9 @@ CREATE TABLE evaluation (experiment_id TEXT, hypothesis_id TEXT, problem_id TEXT
     diagnostic_id TEXT, predicted TEXT, observed TEXT, delta REAL,
     matched INTEGER, is_primary INTEGER, interventions TEXT,
     topic_tags TEXT, problem_tags TEXT);
+CREATE TABLE gate_outcomes (experiment_id TEXT, hypothesis_id TEXT, problem_id TEXT,
+    gate_id TEXT, blocking INTEGER, passed INTEGER, evidence TEXT,
+    interventions TEXT, topic_tags TEXT, problem_tags TEXT);
 
 CREATE INDEX ix_hyp_problem ON hypotheses(problem_id);
 CREATE INDEX ix_exp_hyp ON experiments(hypothesis_id);
@@ -56,6 +59,8 @@ CREATE INDEX ix_meas_diag ON measurements(diagnostic_id);
 CREATE INDEX ix_ie_diag ON intervention_effects(diagnostic_id);
 CREATE INDEX ix_ie_int ON intervention_effects(intervention_id);
 CREATE INDEX ix_eval_diag ON evaluation(diagnostic_id);
+CREATE INDEX ix_gate_exp ON gate_outcomes(experiment_id);
+CREATE INDEX ix_gate_id ON gate_outcomes(gate_id);
 """
 
 
@@ -193,13 +198,23 @@ def reindex(vault: Vault, db_path: str | Path) -> dict:
                      int(pe.diagnostic_id == primary_id),
                      _csv(interventions), _csv(topic), _csv(problem_tags)),
                 )
+            # gate outcomes drive the overclaim rate: how often a
+            # directionally-correct result actually cleared its own bar
+            blocking_ids = {g.id for g in h.gates if g.blocking}
+            for gr in e.gate_results:
+                conn.execute(
+                    "INSERT INTO gate_outcomes VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (e.id, h.id, problem_id, gr.gate_id,
+                     int(gr.gate_id in blocking_ids), int(gr.passed), gr.evidence,
+                     _csv(interventions), _csv(topic), _csv(problem_tags)),
+                )
 
     conn.commit()
     counts = {
         k: conn.execute(f"SELECT COUNT(*) FROM {k}").fetchone()[0]
         for k in ("problems", "hypotheses", "experiments", "diagnostics",
                   "interventions", "papers", "measurements",
-                  "intervention_effects", "evaluation")
+                  "intervention_effects", "evaluation", "gate_outcomes")
     }
     conn.close()
     return counts

@@ -907,8 +907,19 @@ class Store:
     # CALIBRATION (brief §5)
     # ------------------------------------------------------------------ #
     def calibration(self, diagnostic_id=None, tag=None, intervention_id=None) -> dict:
+        """Two orthogonal signals about your own judgement.
+
+        ``accuracy``      — direction: did the metric move the way you said?
+        ``gate_accuracy`` — magnitude: did a directionally-correct result
+                            actually clear the bar you preregistered?
+
+        The EiV campaign had good direction intuition and a poor sense of effect
+        size; one number cannot express that. A low ``gate_accuracy`` is an
+        overclaim rate.
+        """
         conn = self._conn()
         rows = conn.execute("SELECT * FROM evaluation").fetchall()
+        grows = conn.execute("SELECT * FROM gate_outcomes WHERE blocking=1").fetchall()
         conn.close()
 
         def keep(r):
@@ -938,9 +949,40 @@ class Store:
         note = None
         if n >= 2 and acc is not None and acc < 0.5:
             note = "miscalibrated: your predictions here are wrong more often than right"
+
+        # --- gate calibration: the overclaim rate -------------------------- #
+        # Scoped by tag/intervention only: a gate is a claim-level bar, not a
+        # per-diagnostic one, so filtering it by diagnostic_id would be wrong.
+        def gkeep(r):
+            if intervention_id and intervention_id not in (r["interventions"] or "").split(","):
+                return False
+            if tag:
+                tags = set((r["topic_tags"] or "").split(",")) | set((r["problem_tags"] or "").split(","))
+                if tag not in tags:
+                    return False
+            return True
+
+        gkept = [r for r in grows if gkeep(r)]
+        gn = len(gkept)
+        gk = sum(r["passed"] for r in gkept)
+        gate_acc = round(gk / gn, 3) if gn else None
+        by_gate: dict[str, list[int]] = {}
+        for r in gkept:
+            by_gate.setdefault(r["gate_id"], []).append(r["passed"])
+        per_gate = {g: {"passed": sum(v), "n": len(v),
+                        "accuracy": round(sum(v) / len(v), 3)} for g, v in by_gate.items()}
+
+        if gn and gate_acc is not None and gate_acc < 0.5:
+            gnote = ("overclaim signal: most directionally-correct results did NOT "
+                     "clear the bar you preregistered — your effect-size intuition "
+                     "is optimistic even where your direction intuition is good")
+            note = f"{note}; {gnote}" if note else gnote
+
         return {
             "scope": scope,
             "n": n, "right": k, "accuracy": acc,
             "per_diagnostic": per_diag,
+            "gate_n": gn, "gate_passed": gk, "gate_accuracy": gate_acc,
+            "per_gate": per_gate,
             "note": note,
         }
