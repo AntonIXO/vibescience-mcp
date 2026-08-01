@@ -298,6 +298,14 @@ def propose_hypothesis(
     problem_tags: Optional[list[str]] = None,
     papers: Optional[list[str]] = None,
     supersedes: Annotated[Optional[str], Field(description="id of a prior hypothesis this one revises")] = None,
+    gates: Annotated[
+        Optional[list[dict]],
+        Field(description="PREREGISTERED pass/fail criteria: "
+                          "[{id, description, blocking}]. Commit the magnitude, "
+                          "resource or deployment bar HERE, before the run. A "
+                          "directionally-correct result that fails a blocking gate "
+                          "is recorded as `directional_only`, never `supports`."),
+    ] = None,
     id: Optional[str] = None,
 ) -> dict:
     """Propose an explanation/intervention for a problem. You MUST commit ≥1
@@ -307,8 +315,10 @@ def propose_hypothesis(
     `supersedes` rather than deleting it."""
     try:
         return _ok(_dump(store().propose_hypothesis(
-            problem_id, statement, rationale, interventions, predicted_effects,
-            plan, topic_tags, problem_tags, papers, supersedes, id)))
+            problem_id=problem_id, statement=statement, rationale=rationale,
+            interventions=interventions, predicted_effects=predicted_effects,
+            plan=plan, topic_tags=topic_tags, problem_tags=problem_tags,
+            papers=papers, supersedes=supersedes, gates=gates, id=id)))
     except Exception as e:
         return _err(e)
 
@@ -350,6 +360,22 @@ def record_diagnostics(
     diagnostic overwrites it (idempotent). Observed deltas/directions are derived."""
     try:
         return _ok(_dump(store().record_diagnostics(experiment_id, measurements)))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool(annotations={"idempotentHint": True, "destructiveHint": False})
+def record_gate_results(
+    experiment_id: str,
+    results: Annotated[list[dict], Field(description="[{gate_id, passed, evidence}]")],
+) -> dict:
+    """Record outcomes for the gates preregistered on the hypothesis. YOU compute
+    the gate (paired bootstrap CI, sign-flip test, VRAM ceiling) and report the
+    outcome plus the numbers that decided it in `evidence`. A gate that was never
+    preregistered is REJECTED — inventing a criterion after seeing the data is
+    post-hoc. Required before close_experiment when blocking gates exist."""
+    try:
+        return _ok(_dump(store().record_gate_results(experiment_id, results)))
     except Exception as e:
         return _err(e)
 

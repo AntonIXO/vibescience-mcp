@@ -17,6 +17,8 @@ from .models import (
     DiagDirection,
     Direction,
     Experiment,
+    Gate,
+    GateResult,
     Hypothesis,
     HypothesisStatus,
     Intervention,
@@ -306,7 +308,8 @@ class Store:
     # ------------------------------------------------------------------ #
     def propose_hypothesis(self, problem_id, statement, rationale="", interventions=None,
                            predicted_effects=None, plan="", topic_tags=None,
-                           problem_tags=None, papers=None, supersedes=None, id=None) -> Hypothesis:
+                           problem_tags=None, papers=None, supersedes=None,
+                           gates=None, id=None) -> Hypothesis:
         if not self.vault.exists("problems", problem_id):
             raise VibeScienceError(f"Unknown problem '{problem_id}'. Create it first.")
         predicted_effects = predicted_effects or []
@@ -331,9 +334,24 @@ class Store:
                 raise VibeScienceError(
                     f"Unknown intervention '{iv}'. register_intervention() first."
                 )
+        # Preregistered gates: the magnitude / resource / deployment bar the
+        # claim must clear. Committing them HERE, before the run, is what stops
+        # a directionally-correct result being reported as an established win.
+        gs: list[Gate] = []
+        seen_gate_ids: set[str] = set()
+        for g in gates or []:
+            g = Gate.model_validate(g)
+            if g.id in seen_gate_ids:
+                raise VibeScienceError(
+                    f"Duplicate gate id '{g.id}'. Gate ids must be unique within "
+                    f"a hypothesis so results map one-to-one."
+                )
+            seen_gate_ids.add(g.id)
+            gs.append(g)
         h = Hypothesis(
             id=id or slugify(statement)[:80], problem_id=problem_id, statement=statement,
             rationale=rationale, interventions=interventions or [], predicted_effects=pes,
+            gates=gs,
             plan=plan,
             topic_tags=self._inherit_tags(problem_id, topic_tags, interventions, "topic"),
             problem_tags=self._inherit_tags(problem_id, problem_tags, None, "problem"),
@@ -461,6 +479,41 @@ class Store:
             ),
         }
 
+    def record_gate_results(self, experiment_id, results) -> Experiment:
+        """Record outcomes for the gates preregistered on the hypothesis.
+
+        Idempotent per ``gate_id``. Rejects a result for a gate that was never
+        preregistered — inventing a criterion after seeing the data is exactly
+        the move preregistration exists to prevent. vibescience does not compute
+        the gate: you run the bootstrap / sign-flip test / VRAM check and report
+        the outcome plus the numbers that decided it.
+        """
+        if not self.vault.exists("experiments", experiment_id):
+            raise VibeScienceError(f"Unknown experiment '{experiment_id}'.")
+        e = self.vault.read_experiment(experiment_id)
+        if e.closed:
+            raise VibeScienceError(
+                f"Experiment '{experiment_id}' is closed; gate results are part "
+                f"of the record and cannot be revised after the verdict."
+            )
+        h = self.vault.read_hypothesis(e.hypothesis_id)
+        known = {g.id for g in h.gates}
+        existing = {r.gate_id: r for r in e.gate_results}
+        for raw in results:
+            r = GateResult.model_validate(raw)
+            if r.gate_id not in known:
+                raise VibeScienceError(
+                    f"Gate '{r.gate_id}' was never preregistered on "
+                    f"[[{h.id}]] (known: {sorted(known) or 'none'}). Gates must "
+                    f"be committed BEFORE the run; adding one now would be "
+                    f"post-hoc. Supersede the hypothesis with a gated one instead."
+                )
+            existing[r.gate_id] = r
+        e.gate_results = list(existing.values())
+        self.vault.write_experiment(e, tags=h.topic_tags + h.problem_tags)
+        self.reindex()
+        return e
+
     def close_experiment(self, experiment_id, notes="") -> dict:
         """Compute observed_effects, prediction_match, verdict; propagate status.
 
@@ -474,9 +527,21 @@ class Store:
                 "Cannot close: no diagnostics recorded. record_diagnostics() first."
             )
         h = self.vault.read_hypothesis(e.hypothesis_id)
+        # A blocking gate that was preregistered but never reported would
+        # silently be treated as "not passed"; make the agent state the outcome
+        # explicitly rather than letting an omission decide the verdict.
+        missing = [g.id for g in h.gates if g.blocking
+                   and g.id not in {r.gate_id for r in e.gate_results}]
+        if missing:
+            raise VibeScienceError(
+                f"Cannot close: blocking gate(s) {missing} were preregistered on "
+                f"[[{h.id}]] but have no result. Call record_gate_results() "
+                f"first — an unreported gate is not a passed gate."
+            )
         e.observed_effects = compute_observed_effects(e.diagnostics_measured)
         e.prediction_match = compute_prediction_match(h.predicted_effects, e.observed_effects)
-        e.verdict = compute_verdict(h.predicted_effects, e.observed_effects)
+        e.verdict = compute_verdict(h.predicted_effects, e.observed_effects,
+                                    h.gates, e.gate_results)
         e.closed = True
         if notes:
             e.notes = notes
@@ -495,6 +560,14 @@ class Store:
         elif e.verdict == Verdict.refutes:
             suggestion = ("prediction refuted → record why it failed; recall() will "
                           "surface this so it is never silently retried")
+        elif e.verdict == Verdict.directional_only:
+            failed = [r.gate_id for r in e.gate_results if not r.passed] or ["<unreported>"]
+            suggestion = (
+                f"direction matched but preregistered gate(s) {failed} FAILED — "
+                f"this does NOT establish the claim. Do not deploy and do not "
+                f"unlock a locked test on it. Record why the magnitude fell short, "
+                f"then either supersede the hypothesis or run a better-powered test."
+            )
         else:
             suggestion = "inconclusive → the primary diagnostic didn't move; revise the hypothesis"
 
