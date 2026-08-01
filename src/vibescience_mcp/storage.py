@@ -178,6 +178,10 @@ class Vault:
                          "did NOT pass. This does not establish the claim.\n")
         if e.crash_reason:
             body += f"\n**Crash:** {e.crash_reason}\n"
+        if e.provenance:
+            body += "\n## Provenance\n"
+            for k in sorted(e.provenance):
+                body += f"- `{k}`: `{e.provenance[k]}`\n"
         if e.notes:
             body += f"\n## Notes\n{e.notes}\n"
         if tags:

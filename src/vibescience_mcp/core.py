@@ -514,6 +514,86 @@ class Store:
         self.reindex()
         return e
 
+    # Allowlist of the fields that make a run auditable. Everything else stays
+    # in the report — this is a log, not a mirror of the artifact tree.
+    _PROV_TOP = ("config_sha256", "split_sha256", "protocol_sha256",
+                 "corrected_mask_sha256", "implementation_digest",
+                 "environment_sha256", "arm", "objective")
+    _PROV_ENV = ("git_sha", "cuda_device", "torch", "python", "hostname",
+                 "platform", "implementation_digest", "protocol_sha256")
+
+    def import_run_report(self, experiment_id: str, report_path: str) -> dict:
+        """Ingest a run-report sidecar: integrity hashes + resource facts.
+
+        The campaign already writes implementation/config/split/protocol hashes,
+        oom/nonfinite flags and peak VRAM. Retyping those into a prose
+        ``config_note`` loses them to search and to audit, while
+        ``curate-long-running-experiments`` §7 requires verifying exactly those
+        fields. This lifts the auditable subset into frontmatter and, on a failed
+        run, tells the agent to call ``abort_experiment`` rather than inventing a
+        null result.
+        """
+        import json as _json
+        from pathlib import Path as _Path
+
+        if not self.vault.exists("experiments", experiment_id):
+            raise VibeScienceError(f"Unknown experiment '{experiment_id}'.")
+        p = _Path(report_path).expanduser()
+        if not p.is_file():
+            raise VibeScienceError(f"Run report not found: {report_path}")
+        try:
+            rep = _json.loads(p.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise VibeScienceError(f"Run report is not valid JSON: {exc}") from exc
+        if not isinstance(rep, dict):
+            raise VibeScienceError("Run report is not valid JSON: expected an object.")
+
+        prov: dict[str, str] = {}
+        for k in self._PROV_TOP:
+            if rep.get(k) is not None:
+                prov[k] = str(rep[k])
+        env = rep.get("environment") or {}
+        if isinstance(env, dict):
+            for k in self._PROV_ENV:
+                if env.get(k) is not None:
+                    prov.setdefault(k, str(env[k]))
+        gpu = rep.get("gpu") or {}
+        if isinstance(gpu, dict) and gpu.get("peak_memory_allocated_gib") is not None:
+            prov["peak_memory_allocated_gib"] = str(gpu["peak_memory_allocated_gib"])
+        prov["report_path"] = str(p)
+
+        e = self.vault.read_experiment(experiment_id)
+        e.provenance = {**e.provenance, **prov}
+        h = self.vault.read_hypothesis(e.hypothesis_id)
+        pred = {pe.diagnostic_id: pe.direction for pe in h.predicted_effects}
+        self.vault.write_experiment(e, predicted=pred,
+                                    tags=h.topic_tags + h.problem_tags)
+        self.reindex()
+
+        err = rep.get("error") or {}
+        crashed = bool(rep.get("oom") or rep.get("nonfinite") or err)
+        reason = ""
+        if crashed:
+            parts = []
+            if rep.get("oom"):
+                parts.append("OOM")
+            if rep.get("nonfinite"):
+                parts.append("nonfinite loss")
+            if isinstance(err, dict) and err.get("type"):
+                parts.append(f"{err['type']}: {str(err.get('message', ''))[:160]}")
+            reason = "; ".join(parts)
+        return {
+            "experiment_id": experiment_id,
+            "provenance_fields": sorted(prov),
+            "crash_detected": crashed,
+            "crash_reason": reason,
+            "suggested_next_action": (
+                f"report shows a FAILED run ({reason}) — call "
+                f"abort_experiment('{experiment_id}', crash_reason=...) rather "
+                f"than recording a null result; a crash is not evidence"
+            ) if crashed else "provenance captured; record_diagnostics next",
+        }
+
     def close_experiment(self, experiment_id, notes="") -> dict:
         """Compute observed_effects, prediction_match, verdict; propagate status.
 

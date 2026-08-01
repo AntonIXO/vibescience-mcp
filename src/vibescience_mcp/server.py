@@ -365,6 +365,23 @@ def record_diagnostics(
 
 
 @mcp.tool(annotations={"idempotentHint": True, "destructiveHint": False})
+def import_run_report(
+    experiment_id: str,
+    report_path: Annotated[str, Field(description="Absolute path to the run's report.json")],
+) -> dict:
+    """Ingest a run-report sidecar — integrity hashes (implementation/config/
+    split/protocol), git sha, exact device, peak VRAM, oom/nonfinite flags —
+    into the experiment record. Prefer this over retyping hashes into
+    `config_note`: frontmatter is searchable and auditable, prose is not. If the
+    report shows a FAILED run it tells you to call abort_experiment instead of
+    inventing a null result."""
+    try:
+        return _ok(store().import_run_report(experiment_id, report_path))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool(annotations={"idempotentHint": True, "destructiveHint": False})
 def record_gate_results(
     experiment_id: str,
     results: Annotated[list[dict], Field(description="[{gate_id, passed, evidence}]")],

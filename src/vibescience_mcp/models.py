@@ -252,6 +252,7 @@ class Experiment(BaseModel):
     verdict: Optional[Verdict] = None
     prediction_match: Optional[PredictionMatch] = None
     crash_reason: str = ""
+    provenance: dict[str, str] = Field(default_factory=dict)
     notes: str = ""
     artifacts: list[str] = Field(default_factory=list)
     closed: bool = False
