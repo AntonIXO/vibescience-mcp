@@ -23,6 +23,7 @@ from .models import (
     Intervention,
     Paper,
     Problem,
+    Tag,
 )
 
 KINDS = {
@@ -32,6 +33,7 @@ KINDS = {
     "diagnostics": Diagnostic,
     "interventions": Intervention,
     "papers": Paper,
+    "tags": Tag,
 }
 SUBDIRS = list(KINDS) + ["_canvas"]
 
@@ -131,9 +133,12 @@ class Vault:
     # Experiment
     # ===================================================================== #
     def write_experiment(self, e: Experiment, diags: dict[str, Diagnostic] | None = None,
-                         predicted: dict[str, Direction] | None = None) -> Path:
+                         predicted: dict[str, Direction] | None = None,
+                         tags: list[str] | None = None) -> Path:
         meta = e.model_dump(mode="json", exclude={"notes"})
         body = f"## Summary\nTests hypothesis {wl(e.hypothesis_id)}.\n"
+        if e.parent_experiment_id:
+            body += f"Branches from {wl(e.parent_experiment_id)}.\n"
         if e.git_ref:
             body += f"At commit `{e.git_ref}`.\n"
         if e.external_run:
@@ -156,8 +161,12 @@ class Vault:
                 body += line + "\n"
         if e.verdict:
             body += f"\n**Verdict:** {e.verdict.value}\n"
+        if e.crash_reason:
+            body += f"\n**Crash:** {e.crash_reason}\n"
         if e.notes:
             body += f"\n## Notes\n{e.notes}\n"
+        if tags:
+            body += "\n" + " ".join(f"#{t}" for t in tags) + "\n"
         return self._write("experiments", e.id, meta, body)
 
     def read_experiment(self, id_: str) -> Experiment:
@@ -171,6 +180,9 @@ class Vault:
     def write_diagnostic(self, d: Diagnostic) -> Path:
         meta = d.model_dump(mode="json", exclude={"description"})
         body = f"## Description\n{d.description}\n\n*Unit:* `{d.unit}` — *{d.direction.value}*\n"
+        tags = " ".join(f"#{t}" for t in d.topic_tags)
+        if tags:
+            body += f"\n{tags}\n"
         return self._write("diagnostics", d.id, meta, body)
 
     def read_diagnostic(self, id_: str) -> Diagnostic:
@@ -209,6 +221,21 @@ class Vault:
         meta["key_claims"] = claims
         return Paper.model_validate(meta)
 
+    # ===================================================================== #
+    # Tag (registered vocabulary)
+    # ===================================================================== #
+    def write_tag(self, t: Tag) -> Path:
+        meta = t.model_dump(mode="json", exclude={"description"})
+        body = f"## Description\n{t.description}\n\n*Axis:* `{t.axis.value}`\n"
+        if t.aliases:
+            body += "\n## Aliases\n" + "\n".join(f"- {a}" for a in t.aliases) + "\n"
+        return self._write("tags", t.id, meta, body)
+
+    def read_tag(self, id_: str) -> Tag:
+        meta, sec = self._load("tags", id_)
+        meta["description"] = sec.get("description", "")
+        return Tag.model_validate(meta)
+
     # -- iteration helpers ------------------------------------------------- #
     def all_problems(self) -> Iterable[Problem]:
         return [self.read_problem(i) for i in self.ids("problems")]
@@ -227,3 +254,6 @@ class Vault:
 
     def all_papers(self) -> Iterable[Paper]:
         return [self.read_paper(i) for i in self.ids("papers")]
+
+    def all_tags(self) -> Iterable[Tag]:
+        return [self.read_tag(i) for i in self.ids("tags")]

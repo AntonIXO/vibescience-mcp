@@ -16,7 +16,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from .models import compute_observed_effects, compute_prediction_match
+from .models import Verdict, compute_observed_effects, compute_prediction_match
 from .storage import Vault
 
 SCHEMA = """
@@ -26,11 +26,13 @@ CREATE TABLE hypotheses (id TEXT PRIMARY KEY, problem_id TEXT, statement TEXT,
     rationale TEXT, plan TEXT, status TEXT, supersedes TEXT, created_at TEXT);
 CREATE TABLE experiments (id TEXT PRIMARY KEY, hypothesis_id TEXT, git_ref TEXT,
     external_run TEXT, verdict TEXT, prediction_overall INTEGER, closed INTEGER,
-    notes TEXT, created_at TEXT);
+    notes TEXT, created_at TEXT, parent_experiment_id TEXT, crash_reason TEXT);
 CREATE TABLE diagnostics (id TEXT PRIMARY KEY, name TEXT, unit TEXT,
     direction TEXT, description TEXT);
 CREATE TABLE interventions (id TEXT PRIMARY KEY, name TEXT, description TEXT);
 CREATE TABLE papers (id TEXT PRIMARY KEY, title TEXT, arxiv_id_or_url TEXT);
+CREATE TABLE tag_registry (id TEXT PRIMARY KEY, axis TEXT, description TEXT,
+    aliases TEXT, created_at TEXT);
 
 CREATE TABLE tags (entity_id TEXT, entity_kind TEXT, tag TEXT, axis TEXT);
 CREATE TABLE relations (src TEXT, src_kind TEXT, rel TEXT, dst TEXT, dst_kind TEXT);
@@ -47,7 +49,9 @@ CREATE TABLE evaluation (experiment_id TEXT, hypothesis_id TEXT, problem_id TEXT
 
 CREATE INDEX ix_hyp_problem ON hypotheses(problem_id);
 CREATE INDEX ix_exp_hyp ON experiments(hypothesis_id);
+CREATE INDEX ix_exp_parent ON experiments(parent_experiment_id);
 CREATE INDEX ix_tags ON tags(tag);
+CREATE INDEX ix_tags_entity ON tags(entity_id, entity_kind);
 CREATE INDEX ix_meas_diag ON measurements(diagnostic_id);
 CREATE INDEX ix_ie_diag ON intervention_effects(diagnostic_id);
 CREATE INDEX ix_ie_int ON intervention_effects(intervention_id);
@@ -118,6 +122,7 @@ def reindex(vault: Vault, db_path: str | Path) -> dict:
     for d in diags.values():
         conn.execute("INSERT INTO diagnostics VALUES (?,?,?,?,?)",
                      (d.id, d.name, d.unit, d.direction.value, d.description))
+        add_tags(d.id, "diagnostic", d.topic_tags, [])
     for iv in ivs:
         conn.execute("INSERT INTO interventions VALUES (?,?,?)",
                      (iv.id, iv.name, iv.description))
@@ -126,15 +131,22 @@ def reindex(vault: Vault, db_path: str | Path) -> dict:
         conn.execute("INSERT INTO papers VALUES (?,?,?)",
                      (pa.id, pa.title, pa.arxiv_id_or_url))
         add_tags(pa.id, "paper", pa.topic_tags, [])
+    for tg in vault.all_tags():
+        conn.execute("INSERT INTO tag_registry VALUES (?,?,?,?,?)",
+                     (tg.id, tg.axis.value, tg.description,
+                      _csv(tg.aliases), tg.created_at))
 
     # --- experiments + derived tables ---
     for e in exps:
-        conn.execute("INSERT INTO experiments VALUES (?,?,?,?,?,?,?,?,?)",
+        conn.execute("INSERT INTO experiments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                      (e.id, e.hypothesis_id, e.git_ref, e.external_run,
                       e.verdict.value if e.verdict else None,
                       int(e.prediction_match.overall) if e.prediction_match else None,
-                      int(e.closed), e.notes, e.created_at))
+                      int(e.closed), e.notes, e.created_at,
+                      e.parent_experiment_id, e.crash_reason))
         add_rel(e.hypothesis_id, "hypothesis", "tested_by", e.id, "experiment")
+        if e.parent_experiment_id:
+            add_rel(e.parent_experiment_id, "experiment", "parent_of", e.id, "experiment")
         if e.git_ref:
             add_rel(e.id, "experiment", "at_commit", e.git_ref, "git")
 
@@ -143,6 +155,8 @@ def reindex(vault: Vault, db_path: str | Path) -> dict:
         problem_tags = h.problem_tags if h else []
         problem_id = h.problem_id if h else ""
         interventions = h.interventions if h else []
+        # an experiment inherits its hypothesis's tags, so tag search reaches it
+        add_tags(e.id, "experiment", topic, problem_tags)
         for iv in interventions:
             add_rel(e.id, "experiment", "applies", iv, "intervention")
 
@@ -162,8 +176,10 @@ def reindex(vault: Vault, db_path: str | Path) -> dict:
                      o.delta, o.direction.value, _csv(topic), _csv(problem_tags)),
                 )
 
-        # evaluation rows (predicted vs observed) — only meaningful once closed
-        if h and e.closed:
+        # evaluation rows (predicted vs observed) — only meaningful once closed.
+        # A CRASHED run is explicitly excluded: it produced no measurement, so
+        # counting it would score a prediction that was never actually tested.
+        if h and e.closed and e.verdict != Verdict.crashed:
             pm = compute_prediction_match(h.predicted_effects, observed)
             primary_id = h.predicted_effects[0].diagnostic_id if h.predicted_effects else None
             for pe in h.predicted_effects:

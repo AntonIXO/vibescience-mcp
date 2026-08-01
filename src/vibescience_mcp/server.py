@@ -99,6 +99,92 @@ def recall(
         return _err(e)
 
 
+@mcp.tool(annotations={"idempotentHint": True, "destructiveHint": False})
+def register_tag(
+    id: str,
+    axis: Annotated[str, Field(description="topic (subject matter) | problem (failure mode)")],
+    description: str = "",
+    aliases: Annotated[
+        Optional[list[str]],
+        Field(description="Synonyms that resolve to this tag, e.g. ['causality'] on "
+                          "'causal-inference'. Absorbing a synonym is how you STOP "
+                          "the vocabulary fragmenting."),
+    ] = None,
+) -> dict:
+    """Register a tag BEFORE using it. Tags are a fixed vocabulary, like
+    diagnostics — free-text tagging rots (every session invents a synonym, the
+    tag connects nothing, and recall silently misses). Idempotent: calling again
+    MERGES new aliases into the existing tag."""
+    try:
+        return _ok(_dump(store().register_tag(id, axis, description, aliases)))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+def list_tags(
+    axis: Annotated[Optional[str], Field(description="topic | problem")] = None,
+) -> dict:
+    """The registered tag vocabulary with usage counts. CALL THIS BEFORE tagging
+    anything, and reuse an existing tag (or add your wording as its alias)
+    instead of coining a near-duplicate. `orphan: true` marks a tag used at most
+    once or confined to one entity kind — it connects nothing and is dead weight."""
+    try:
+        return _ok(store().list_tags(axis))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+def lineage(experiment_id: str) -> dict:
+    """Ancestry path root → this experiment. The verdict chain along the path is
+    the research narrative: what was tried, what failed, what was built on it."""
+    try:
+        return _ok(store().lineage(experiment_id))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+def children(experiment_id: str) -> dict:
+    """What was tried ON TOP of this experiment. Use it before re-running an
+    idea — a child may already have explored it."""
+    try:
+        return _ok(store().children(experiment_id))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+def leaves(
+    unevaluated_only: Annotated[
+        bool, Field(description="Only leaves that are still open (dangling work).")
+    ] = False,
+) -> dict:
+    """The research frontier: experiments nothing was built on top of. This is
+    where to continue work rather than starting a new branch from scratch."""
+    try:
+        return _ok(store().leaves(unevaluated_only))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool(annotations={"idempotentHint": True, "destructiveHint": False})
+def abort_experiment(
+    experiment_id: str,
+    crash_reason: Annotated[str, Field(description="The error / why the run died.")],
+    notes: str = "",
+) -> dict:
+    """Close a run that CRASHED (OOM, exception, timeout) — no measurement, so
+    NO evidence. Use this instead of inventing a null result: a crash never
+    enters calibration and leaves the hypothesis retryable. Then start a new
+    experiment with parent_experiment_id set to this one."""
+    try:
+        return _ok(store().abort_experiment(experiment_id, crash_reason, notes))
+    except Exception as e:
+        return _err(e)
+
+
 # --------------------------------------------------------------------------- #
 # Problems
 # --------------------------------------------------------------------------- #
@@ -147,13 +233,18 @@ def register_diagnostic(
     unit: str = "",
     direction: Annotated[str, Field(description="higher_better | lower_better | neutral")] = "neutral",
     description: str = "",
+    topic_tags: Annotated[
+        Optional[list[str]],
+        Field(description="Registered topic tags — call list_tags() first."),
+    ] = None,
     id: Optional[str] = None,
 ) -> dict:
     """Register a named, fixed, measurable metric. Diagnostics are a DELIBERATE
     fixed basis — comparability across experiments is what makes the causal map
     possible. Do this before predicting on a metric."""
     try:
-        return _ok(_dump(store().register_diagnostic(name, unit, direction, description, id)))
+        return _ok(_dump(store().register_diagnostic(
+            name, unit, direction, description, topic_tags, id)))
     except Exception as e:
         return _err(e)
 
@@ -231,13 +322,21 @@ def start_experiment(
     git_ref: Annotated[Optional[str], Field(description="branch@shortsha; auto-read from HEAD if omitted")] = None,
     external_run: Annotated[str, Field(description="W&B/MLflow run id or url")] = "",
     config_note: str = "",
+    parent_experiment_id: Annotated[
+        Optional[str],
+        Field(description="The experiment this one BUILDS ON. Set it whenever you are "
+                          "iterating on a previous run — it is what makes "
+                          "lineage/children/leaves work and turns a flat list into a "
+                          "search DAG. Omit only for a genuinely fresh line of attack."),
+    ] = None,
     id: Optional[str] = None,
 ) -> dict:
     """Begin testing a hypothesis. If `git_ref` is omitted the server reads the
     current branch@commit from git HEAD. Reference the external W&B/MLflow run —
     this server stores verdicts, not loss curves."""
     try:
-        return _ok(_dump(store().start_experiment(hypothesis_id, git_ref, external_run, config_note, id)))
+        return _ok(_dump(store().start_experiment(
+            hypothesis_id, git_ref, external_run, config_note, parent_experiment_id, id)))
     except Exception as e:
         return _err(e)
 

@@ -14,14 +14,30 @@ from vibescience_mcp.core import Store
 def seed(vault_root) -> Store:
     s = Store(vault_root)
 
+    # --- tag vocabulary (registered basis, like diagnostics) ---
+    # `projector-freeze` also carries a synonym to exercise alias resolution.
+    for tid, desc in [
+        ("blip2-qformer", "BLIP-2 Q-Former style bridging."),
+        ("contrastive", "Contrastive objectives."),
+        ("projector", "The soft-token projector module."),
+        ("rmsnorm", "RMSNorm parameterisation."),
+    ]:
+        s.register_tag(tid, axis="topic", description=desc)
+    s.register_tag("attention-collapse", axis="problem",
+                   description="The LLM stops attending to injected soft tokens.")
+    s.register_tag("projector-freeze", axis="problem",
+                   description="Projector frozen during training, blocking gradients.",
+                   aliases=["frozen-projector"])
+
     # --- diagnostics (fixed basis) ---
     s.register_diagnostic("linear probe r2", unit="r2", direction="higher_better",
-                          id="linear_probe_r2",
+                          id="linear_probe_r2", topic_tags=["projector"],
                           description="How linearly decodable the target is from soft tokens.")
     s.register_diagnostic("HR MAE", unit="bpm", direction="lower_better", id="hr_mae_bpm",
                           description="Heart-rate mean absolute error in bpm.")
     s.register_diagnostic("attention mass on soft tokens", unit="frac",
                           direction="higher_better", id="attn_mass_soft_tokens",
+                          topic_tags=["projector"],
                           description="Fraction of attention the LLM puts on injected soft tokens.")
     s.register_diagnostic("attention entropy", unit="nats", direction="neutral",
                           id="attn_entropy", description="Entropy of the attention distribution.")
@@ -72,7 +88,7 @@ def seed(vault_root) -> Store:
         ],
         plan="Unfreeze projector, add joint contrastive+captioning loss, retrain LoRA.",
         topic_tags=["contrastive", "projector", "blip2-qformer"],
-        problem_tags=["attention-collapse", "projector-freeze"],
+        problem_tags=["attention-collapse", "frozen-projector"],  # alias → projector-freeze
         papers=["blip2", "coca"],
     )
     e1 = s.start_experiment("projector-freeze-blocks-caption-grad",

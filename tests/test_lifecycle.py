@@ -11,6 +11,8 @@ def test_full_loop_empty_vault(vault):
     → start(auto git_ref) → record → close(auto verdict)."""
     s = Store(vault)
 
+    s.register_tag("t", axis="topic")
+    s.register_tag("pt", axis="problem")
     s.create_problem("test problem", id="p1", topic_tags=["t"], problem_tags=["pt"])
 
     # recall on an empty vault returns nothing

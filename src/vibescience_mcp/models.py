@@ -54,6 +54,18 @@ class Verdict(str, Enum):
     supports = "supports"
     refutes = "refutes"
     inconclusive = "inconclusive"
+    crashed = "crashed"
+
+
+class TagAxis(str, Enum):
+    """Which axis a tag lives on. Kept separate so the graph clusters.
+
+    ``topic``   — subject matter (circadian, robust-covariance).
+    ``problem`` — failure mode (masking, missing-early-warning).
+    """
+
+    topic = "topic"
+    problem = "problem"
 
 
 # --------------------------------------------------------------------------- #
@@ -116,6 +128,23 @@ class Diagnostic(BaseModel):
     unit: str = ""
     direction: DiagDirection = DiagDirection.neutral
     description: str = ""
+    topic_tags: list[str] = Field(default_factory=list)
+
+
+class Tag(BaseModel):
+    """A REGISTERED tag — the vocabulary is a fixed basis, like diagnostics.
+
+    Free-text tags rot: every session invents a synonym, orphans accumulate, and
+    ``recall`` silently misses. So a tag must be registered before use, carries
+    its axis, and absorbs its own synonyms via ``aliases`` (entity resolution,
+    additive and reversible — an alias never destroys the surface form).
+    """
+
+    id: str
+    axis: TagAxis
+    description: str = ""
+    aliases: list[str] = Field(default_factory=list)
+    created_at: str = Field(default_factory=now_iso)
 
 
 class Intervention(BaseModel):
@@ -178,6 +207,7 @@ class Hypothesis(BaseModel):
 class Experiment(BaseModel):
     id: str
     hypothesis_id: str
+    parent_experiment_id: Optional[str] = None  # commit-DAG lineage (AgentHub)
     git_ref: str = ""
     external_run: str = ""
     config_note: str = ""
@@ -185,6 +215,7 @@ class Experiment(BaseModel):
     observed_effects: list[ObservedEffect] = Field(default_factory=list)
     verdict: Optional[Verdict] = None
     prediction_match: Optional[PredictionMatch] = None
+    crash_reason: str = ""
     notes: str = ""
     artifacts: list[str] = Field(default_factory=list)
     closed: bool = False
@@ -261,8 +292,15 @@ def compute_verdict(
 
 
 def verdict_to_hypothesis_status(v: Verdict) -> HypothesisStatus:
+    """Map a computed verdict onto the hypothesis lifecycle.
+
+    ``crashed`` is deliberately NOT evidence: the run never produced a
+    measurement, so the hypothesis stays ``testing`` and remains retryable.
+    Conflating "the code broke" with "the idea was wrong" poisons calibration.
+    """
     return {
         Verdict.supports: HypothesisStatus.confirmed,
         Verdict.refutes: HypothesisStatus.refuted,
         Verdict.inconclusive: HypothesisStatus.inconclusive,
+        Verdict.crashed: HypothesisStatus.testing,
     }[v]
