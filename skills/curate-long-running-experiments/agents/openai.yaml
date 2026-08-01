@@ -1,0 +1,4 @@
+interface:
+  display_name: "Curate Long Experiments"
+  short_description: "Delegate and audit sequential experiment runs"
+  default_prompt: "Use $curate-long-running-experiments to delegate this frozen experiment campaign to an economical curator and verify its artifacts."

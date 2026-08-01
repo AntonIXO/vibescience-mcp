@@ -90,6 +90,50 @@ s.calibration(diagnostic_id=...); s.causal_map(problem_id=...); s.recall(problem
 ```
 Deps in a fresh venv: `uv pip install python-frontmatter pydantic PyYAML` (plus pandas/sklearn/sqlalchemy/psycopg2-binary for the experiment). `uv pip`, never bare `pip` (venv isolation).
 
+## Gates: direction is not the claim (2026-08 rework)
+
+A confirmation run without preregistered gates records `supports` on ANY
+positive mean delta. That is how an EiV run with exact sign-flip p=0.34375 and
+a paired bootstrap CI95 of [-0.0085, +0.0135] crossing zero was logged as a win
+while its own aggregate said `superiority_passed: False`. Every threshold was
+already written — as free-text `magnitude_note` ("at least +0.010", "below
+11.25 GiB") — but nothing enforced them.
+
+- Declare the bar in `propose_hypothesis(gates=[{id, description, blocking}])`
+  BEFORE the run.
+- Report outcomes with `record_gate_results` — YOU compute the statistic
+  (bootstrap CI, sign-flip test, VRAM check); vibescience only records it.
+- Direction right + blocking gate failed → **`directional_only`**, which maps to
+  hypothesis status `inconclusive`, never `confirmed`. Do not deploy on it, do
+  not unlock a locked test.
+- An unreported blocking gate blocks `close_experiment`. Silence is not a pass.
+- A gate not preregistered is rejected at `record_gate_results` (post-hoc).
+- `calibration()` returns `accuracy` (direction) AND `gate_accuracy`
+  (magnitude). The latter is your **overclaim rate**.
+
+To correct an already-closed record, SUPERSEDE it — never rewrite. The chain
+carries the correction and the audit trail survives.
+
+## Provenance: ingest, don't retype
+
+`import_run_report(experiment_id, path_to_report.json)` lifts
+implementation/config/split/protocol hashes, git sha, device, peak VRAM and
+oom/nonfinite flags into frontmatter (16 fields on a real EiV report). Prose in
+`config_note` is not searchable and not auditable. If the report shows a failed
+run it tells you to call `abort_experiment` instead of inventing a null result.
+
+## Companion skills (bundled in this repo under `skills/`)
+
+- `run-cross-modal-loss-studies` — three-baseline discipline (seed-matched
+  untrained control / trained incumbent / alternative), probe-saturation
+  controls, duplicate-positive audits, two-stage pilot→confirmation campaigns,
+  smoke ≠ science.
+- `curate-long-running-experiments` — delegate mechanical execution to one
+  economical curator while the primary agent keeps scientific authority and
+  independently verifies artifacts. Its §8 four-level distinction (directional
+  support / magnitude gate / deployment gate / locked-test eligibility) is what
+  `gates` + `directional_only` now enforce mechanically.
+
 ## Real prod data access (optihealth)
 
 **Vault path:** the live vault is `/root/research/vibescience-vault` (the default

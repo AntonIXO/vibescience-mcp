@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cross-Modal Loss Studies"
+  short_description: "Run rigorous cross-modal objective studies"
+  default_prompt: "Use $run-cross-modal-loss-studies to design and execute a preregistered cross-modal loss comparison."
