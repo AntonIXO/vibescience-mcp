@@ -303,6 +303,59 @@ class Store:
             out = [p for p in out if tagset & set(p.topic_tags + p.problem_tags)]
         return out
 
+    def update_problem(self, id: str, status=None, description=None, title=None,
+                       topic_tags=None, problem_tags=None, paper_refs=None) -> Problem:
+        """Amend a problem after evidence changes its framing.
+
+        This exists because a problem statement outlives the world it described.
+        A failure mode gets root-caused and fixed, but the record still asserts
+        the pre-fix symptom — so ``recall`` hands a future session the confirmed
+        fix AND a description contradicting it. Only the fields you pass are
+        touched; everything else is preserved.
+
+        Resolving is gated on evidence, not assertion. ``status='resolved'``
+        requires >=1 CONFIRMED hypothesis on this problem, for the same reason
+        ``close_experiment`` computes the verdict instead of letting the agent
+        declare one: a resolution is a claim about reality and must be earned.
+        Use 'parked' to shelve a problem you are not pursuing — that is a
+        statement about your attention, not about the evidence, so it is
+        ungated.
+        """
+        p = self.get_problem(id)
+        if status is not None:
+            st = ProblemStatus(status)
+            if st is ProblemStatus.resolved and p.status is not ProblemStatus.resolved:
+                confirmed = [
+                    h.id for h in self.vault.all_hypotheses()
+                    if h.problem_id == id and h.status is HypothesisStatus.confirmed
+                ]
+                if not confirmed:
+                    raise VibeScienceError(
+                        f"Cannot resolve '{id}': no CONFIRMED hypothesis is attached "
+                        f"to it, so nothing has earned the resolution. Close an "
+                        f"experiment whose verdict supports its hypothesis first, or "
+                        f"use status='parked' to shelve this without claiming it is "
+                        f"solved."
+                    )
+            p.status = st
+        if description is not None:
+            p.description = description
+        if title is not None:
+            p.title = title
+        if topic_tags is not None:
+            p.topic_tags = self.resolve_tags(topic_tags, "topic")
+        if problem_tags is not None:
+            p.problem_tags = self.resolve_tags(problem_tags, "problem")
+        if paper_refs is not None:
+            for r in paper_refs:
+                if not self.vault.exists("papers", r):
+                    raise VibeScienceError(f"Unknown paper '{r}'. add_paper() first.")
+            p.paper_refs = paper_refs
+        p.updated_at = now_iso()
+        self.vault.write_problem(p)
+        self.reindex()
+        return p
+
     # ------------------------------------------------------------------ #
     # Hypothesis  (prediction is mandatory — brief §6)
     # ------------------------------------------------------------------ #

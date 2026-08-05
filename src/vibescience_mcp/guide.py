@@ -19,6 +19,15 @@ whole point (a queryable causal map + a calibration signal on your own intuition
    `results` are hypotheses (they carry verdicts); `context` is related
    papers/interventions/problems — grounding, not evidence.
 2. **Frame the Problem.** `create_problem` if the failure mode isn't logged yet.
+   When evidence later changes the framing — a root cause is found, the stated
+   symptom stops being true, the scope narrows — call `update_problem` rather
+   than leaving the record stale or opening a near-duplicate. A problem whose
+   description still asserts a symptom you have since fixed makes `recall` hand
+   the next session your confirmed fix AND a statement contradicting it. Amend
+   the description with a dated superseded banner instead of deleting the old
+   wording; a wrong framing you have outgrown is provenance. Resolving is gated
+   on a CONFIRMED hypothesis for the same reason verdicts are computed — use
+   `parked` to shelve something you are simply not pursuing.
 3. **Register your basis.** Diagnostics are a *fixed, comparable* basis, not
    free text. `register_diagnostic` for any metric you'll predict on;
    `register_intervention` for any named change you'll apply.

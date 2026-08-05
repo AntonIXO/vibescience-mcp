@@ -24,6 +24,7 @@ from .models import (
     Paper,
     Problem,
     Tag,
+    now_iso,
 )
 
 KINDS = {
@@ -98,6 +99,13 @@ class Vault:
     def read_problem(self, id_: str) -> Problem:
         meta, sec = self._load("problems", id_)
         meta["description"] = sec.get("description", "")
+        # A missing updated_at must NOT fall through to the model's
+        # default_factory=now_iso: that lets a pure read stamp the record with
+        # the current time and fabricate an edit that never happened (hand-edited
+        # vault files and pre-update_problem records both hit this). Fall back to
+        # created_at, which is the last time we can actually prove it changed.
+        if not meta.get("updated_at"):
+            meta["updated_at"] = meta.get("created_at") or now_iso()
         return Problem.model_validate(meta)
 
     # ===================================================================== #

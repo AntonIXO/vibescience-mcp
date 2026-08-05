@@ -215,6 +215,48 @@ def get_problem(id: str) -> dict:
         return _err(e)
 
 
+@mcp.tool(annotations={"idempotentHint": True, "destructiveHint": False})
+def update_problem(
+    id: str,
+    status: Annotated[
+        Optional[str],
+        Field(description="open | resolved | parked. 'resolved' requires a CONFIRMED "
+                          "hypothesis on this problem; use 'parked' to shelve one."),
+    ] = None,
+    description: Optional[str] = None,
+    title: Optional[str] = None,
+    topic_tags: Annotated[
+        Optional[list[str]],
+        Field(description="Replaces the existing topic tags — call list_tags() first."),
+    ] = None,
+    problem_tags: Annotated[
+        Optional[list[str]],
+        Field(description="Replaces the existing problem tags — call list_tags() first."),
+    ] = None,
+    paper_refs: Optional[list[str]] = None,
+) -> dict:
+    """Amend a problem after evidence changes its framing, and bump updated_at.
+
+    Use this when a root cause is found, a problem is re-scoped, or its stated
+    symptom is no longer true. A problem record outlives the world it described:
+    once a failure is fixed, an untouched description makes `recall` hand a
+    future session the confirmed fix AND a contradicting problem statement.
+
+    Only the fields you pass are changed. Prefer amending the description with a
+    dated banner over deleting the original wording — a superseded framing is
+    provenance, and negative results are first-class here.
+
+    `status='resolved'` is gated: at least one hypothesis on this problem must be
+    CONFIRMED. Resolution is a claim about reality, so it is earned from a
+    computed verdict, never asserted directly.
+    """
+    try:
+        return _ok(_dump(store().update_problem(
+            id, status, description, title, topic_tags, problem_tags, paper_refs)))
+    except Exception as e:
+        return _err(e)
+
+
 @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
 def list_problems(status: Optional[str] = None, tags: Optional[list[str]] = None) -> dict:
     """List problems, optionally filtered by status {open|resolved|parked} or tags."""
